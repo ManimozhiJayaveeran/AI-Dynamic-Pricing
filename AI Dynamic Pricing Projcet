@@ -1,0 +1,310 @@
+# ===========================
+# Step 1: Import Libraries
+# ===========================
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+
+plt.rcParams["figure.figsize"] = (8, 5)
+plt.rcParams["figure.autolayout"] = True
+
+# ===========================
+# Step 2: Load Dataset
+# ===========================
+df = pd.read_csv("AI_Dynamic_Pricing_Dataset_Advanced.csv")
+print("Data Shape:", df.shape)
+print("Missing Values:\n", df.isnull().sum())
+
+# ===========================
+# Step 3: Feature Engineering
+# ===========================
+competitor_cols = [
+    'Competitor_Price_Amazon',
+    'Competitor_Price_Flipkart',
+    'Competitor_Price_Walmart',
+    'Competitor_Price_Myntra',
+    'Competitor_Price_Etsy'
+]
+df['competitor_avg_price'] = df[competitor_cols].mean(axis=1)
+df['price_diff_avg'] = df['Base_Price'] - df['competitor_avg_price']
+df['competitiveness'] = df['Base_Price'] / df['competitor_avg_price']
+df['Revenue'] = df['Base_Price'] * df['Demand']
+df = df.drop(columns=['Product_ID'])
+
+# ===========================
+# Step 4: Features & Target
+# ===========================
+X = df.drop(columns=['Demand'])
+y = df['Demand']
+cat_cols = ['Category', 'Season', 'Customer_Segment', 'Time_of_Day']
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('cat', OneHotEncoder(handle_unknown='ignore'), cat_cols),
+        ('num', StandardScaler(), [col for col in X.columns if col not in cat_cols])
+    ]
+)
+
+# ===========================
+# Step 5: Train/Test Split
+# ===========================
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# ===========================
+# Step 6: Train Multiple Models
+# ===========================
+models = {
+    "Linear Regression": LinearRegression(),
+    "Ridge Regression": Ridge(alpha=1.0),
+    "Lasso Regression": Lasso(alpha=0.01),
+    "Random Forest": RandomForestRegressor(n_estimators=200, random_state=42),
+    "XGBoost": XGBRegressor(n_estimators=200, learning_rate=0.1, random_state=42)
+}
+
+results = {}
+best_model_name = None
+best_r2 = -np.inf
+best_pipeline = None
+
+for name, model in models.items():
+    pipeline = Pipeline([
+        ('preprocess', preprocessor),
+        ('model', model)
+    ])
+    pipeline.fit(X_train, y_train)
+    y_pred = pipeline.predict(X_test)
+
+    r2 = r2_score(y_test, y_pred)
+    if r2 > best_r2:
+        best_r2 = r2
+        best_model_name = name
+        best_pipeline = pipeline
+
+    results[name] = {
+        "R2": round(r2, 4),
+        "RMSE": round(np.sqrt(mean_squared_error(y_test, y_pred)), 2),
+        "MAE": round(mean_absolute_error(y_test, y_pred), 2)
+    }
+
+# ===========================
+# Step 7: Model Performance
+# ===========================
+print("\n--- Model Comparison ---")
+for model, metrics in results.items():
+    print(f"{model}: R2={metrics['R2']}, RMSE={metrics['RMSE']}, MAE={metrics['MAE']}")
+print(f"\nBest Model: {best_model_name} (R² = {best_r2})")
+
+# ===========================
+# Step 8: Business Comparisons + Visualizations
+# ===========================
+print("\n--- Business Insights ---")
+
+# 1. Category-wise demand
+cat_demand = df.groupby("Category")["Demand"].mean().sort_values()
+cat_demand.plot(kind="barh", title="Average Demand by Category")
+plt.xlabel("Average Demand")
+plt.ylabel("Category")
+plt.show()
+
+# 2. Competitor prices by category
+comp_cat = df.groupby("Category")[competitor_cols].mean()
+comp_cat.plot(kind="bar")
+plt.title("Competitor Prices by Category")
+plt.ylabel("Average Price")
+plt.show()
+
+# 3. Base price distribution
+sns.histplot(df["Base_Price"], kde=True)
+plt.title("Base Price Distribution")
+plt.show()
+
+# 4. Stock availability by category
+stock_cat = df.groupby("Category")["Stock"].mean()
+stock_cat.plot(kind="bar", title="Average Stock by Category")
+plt.show()
+
+# 5. Demand by Time of Day
+tod_demand = df.groupby("Time_of_Day")["Demand"].mean()
+tod_demand.plot(kind="bar", title="Demand by Time of Day")
+plt.show()
+
+# 6. Views: Top vs Low
+top_views = df.sort_values("Views", ascending=False).head(5)
+sns.barplot(x="Category", y="Views", data=top_views)
+plt.title("Top Viewed Products")
+plt.show()
+
+# 7. Discounts by category
+disc_cat = df.groupby("Category")["Discount"].mean()
+disc_cat.plot(kind="bar", title="Average Discount by Category")
+plt.show()
+
+# 8. Customer segment analysis
+seg_demand = df.groupby("Customer_Segment")["Demand"].mean()
+seg_demand.plot(kind="bar", title="Demand by Customer Segment")
+plt.show()
+
+# 9. Rating distribution
+sns.boxplot(x="Category", y="Rating", data=df)
+plt.title("Rating by Category")
+plt.show()
+
+# 10. Cheapest platform
+cheapest_platform = df.groupby("Category")[competitor_cols].mean().idxmin(axis=1)
+cheapest_prices = df.groupby("Category")[competitor_cols].mean().min(axis=1)
+table_cheapest = pd.DataFrame({'Cheapest Platform': cheapest_platform, 'Price': cheapest_prices})
+print("\n--- Cheapest Platform ---\n", table_cheapest)
+
+plt.figure(figsize=(6,4))
+sns.barplot(x=table_cheapest.index, y=table_cheapest['Price'])
+plt.title('Cheapest Platform by Category')
+plt.xlabel('Category'); plt.ylabel('Price')
+plt.show()
+print("Insight: Shows which competitor offers the lowest price per category.")
+
+# 11. Seasonal Demand
+seasonal_demand = df.groupby("Season")["Sales"].sum().reset_index()
+print("\n--- Seasonal Demand ---\n", seasonal_demand)
+
+plt.figure(figsize=(6,4))
+sns.lineplot(data=seasonal_demand, x='Season', y='Sales', marker='o')
+plt.title('Seasonal Demand')
+plt.show()
+print("Insight: Peaks indicate high-demand seasons; useful for inventory planning.")
+
+# 12. Profit by Category
+profit_by_category = df.groupby("Category")['Profit'].sum().reset_index()
+print("\n--- Profit by Category ---\n", profit_by_category)
+
+plt.figure(figsize=(6,4))
+sns.barplot(data=profit_by_category, x='Category', y='Profit')
+plt.title('Profit by Category')
+plt.show()
+print("Insight: Highlights which categories drive the most profit.")
+
+# 13. Competitor Price Comparison
+comp_price = df.groupby("Category")[competitor_cols].mean().reset_index()
+print("\n--- Competitor Price Comparison ---\n", comp_price)
+
+comp_price_melted = comp_price.melt(id_vars='Category', var_name='Competitor', value_name='Price')
+plt.figure(figsize=(6,4))
+sns.barplot(data=comp_price_melted, x='Category', y='Price', hue='Competitor')
+plt.title('Competitor Price Comparison')
+plt.legend(loc='upper right')
+plt.show()
+print("Insight: Shows pricing strategies of competitors across categories.")
+
+# ===========================
+# Step 8a: Feature Correlation with Demand
+# ===========================
+plt.figure(figsize=(8,6))
+corr = df.corr()['Demand'].sort_values(ascending=False)
+sns.barplot(x=corr.index, y=corr.values)
+plt.xticks(rotation=45)
+plt.title("Feature Correlation with Demand")
+plt.show()
+
+# ===========================
+# Step 9: PCA + Clustering
+# ===========================
+numeric_features = df.drop(columns=cat_cols + ['Demand']).select_dtypes(np.number)
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(numeric_features)
+
+# PCA
+pca = PCA(n_components=3)
+X_pca = pca.fit_transform(X_scaled)
+
+kmeans = KMeans(n_clusters=3, random_state=42)
+clusters = kmeans.fit_predict(X_pca)
+df["Cluster"] = clusters
+
+fig = plt.figure(figsize=(10, 7))
+ax = fig.add_subplot(111, projection="3d")
+ax.scatter(X_pca[:, 0], X_pca[:, 1], X_pca[:, 2], c=clusters, cmap="viridis", s=30)
+plt.title("PCA + Clustering")
+plt.show()
+print("Clusters help identify product/customer segments (simplified explanation).")
+
+# ===========================
+# Step 10: Optimal Price Finder (Best Model)
+# ===========================
+def recommend_optimal_price(product_row, model_pipeline, price_range=(50, 500), step=10):
+    prices = np.arange(price_range[0], price_range[1], step)
+    simulated = []
+    for p in prices:
+        temp = product_row.copy()
+        temp['Base_Price'] = p
+        demand_pred = model_pipeline.predict(pd.DataFrame([temp]))[0]
+        revenue = p * demand_pred
+        simulated.append((p, demand_pred, revenue))
+
+    simulated_df = pd.DataFrame(simulated, columns=['Price', 'Predicted_Demand', 'Revenue'])
+    best_demand_price = simulated_df.loc[simulated_df['Predicted_Demand'].idxmax(), 'Price']
+    best_revenue_price = simulated_df.loc[simulated_df['Revenue'].idxmax(), 'Price']
+
+    # Demand Curve
+    plt.figure()
+    plt.plot(simulated_df['Price'], simulated_df['Predicted_Demand'], marker='o', label="Demand")
+    plt.axvline(x=best_demand_price, color='green', linestyle='--', label=f"Max Demand: {best_demand_price}")
+    plt.xlabel("Price")
+    plt.ylabel("Predicted Demand")
+    plt.title("Price vs Predicted Demand")
+    plt.legend()
+    plt.show()
+
+    # Revenue Curve
+    plt.figure()
+    plt.plot(simulated_df['Price'], simulated_df['Revenue'], marker='o', color='orange', label="Revenue")
+    plt.axvline(x=best_revenue_price, color='red', linestyle='--', label=f"Max Revenue: {best_revenue_price}")
+    plt.xlabel("Price")
+    plt.ylabel("Revenue")
+    plt.title("Price vs Revenue")
+    plt.legend()
+    plt.show()
+
+    return best_demand_price, best_revenue_price
+
+# Example for multiple products
+for i in range(3):
+    sample_product = X.iloc[i].copy()
+    best_demand, best_revenue = recommend_optimal_price(sample_product, best_pipeline)
+    print(f"Product {i+1}: Max Demand Price = {best_demand}, Max Revenue Price = {best_revenue}")
+
+# ===========================
+# Step 11: Predicted vs Actual Demand
+# ===========================
+y_pred = best_pipeline.predict(X_test)
+plt.scatter(y_test, y_pred, alpha=0.7)
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+plt.xlabel("Actual Demand")
+plt.ylabel("Predicted Demand")
+plt.title("Actual vs Predicted Demand")
+plt.show()
+
+# ===========================
+# Step 12: Final Business Summary
+# ===========================
+print("\n--- Business Summary ---")
+print(f"Best predictive model: {best_model_name}")
+print("Key Insights:")
+print("1. Categories show variation in demand → helps price optimization.")
+print("2. Competitor prices influence demand → competitive pricing is key.")
+print("3. Seasonal & Time-of-Day patterns suggest dynamic adjustments.")
+print("4. Revenue analysis identifies most profitable categories.")
+print("5. Discounts, customer segments, and ratings affect sales.")
+print("6. PCA + Clustering reveal product/customer segments for targeted strategy.")
+
+plt.show()
